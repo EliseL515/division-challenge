@@ -585,11 +585,78 @@ function getSettings(){
       teacherPassword: (typeof r.teacherPassword==='string' && r.teacherPassword.length>0) ? r.teacherPassword : '1234' };
   }catch(e){ return { levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' }; }
 }
-function saveSettings(s){ localStorage.setItem(K_SET, JSON.stringify(s)); }
+function saveSettings(s){ localStorage.setItem(K_SET, JSON.stringify(s)); cloudSave('settings', s); }
 function getStudents(){ try{ return JSON.parse(localStorage.getItem(K_STU))||{}; }catch(e){ return {}; } }
-function saveStudents(s){ localStorage.setItem(K_STU, JSON.stringify(s)); }
+function saveStudents(s){ localStorage.setItem(K_STU, JSON.stringify(s)); cloudSave('students', s); }
 function getAnswers(){ try{ return JSON.parse(localStorage.getItem(K_ANS))||[]; }catch(e){ return []; } }
 function saveAnswers(a){ localStorage.setItem(K_ANS, JSON.stringify(a)); }
+
+/* ===== 雲端同步（Google Apps Script Web App） ===== */
+var CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxmabWGfuVuqd9uwgkEYKaI6mMg6ZE4-xbsW1NoUc6iq7G9rTJvW2RDOW-PoXgFduYRUw/exec';
+
+function cloudPost(key, value){
+  if(!CLOUD_URL) return;
+  try{
+    if(!window.__cloudFrame){
+      window.__cloudFrame = document.createElement('iframe');
+      window.__cloudFrame.name = 'hiddenCloudFrame';
+      window.__cloudFrame.style.display = 'none';
+      document.body.appendChild(window.__cloudFrame);
+    }
+    var f = document.createElement('form');
+    f.method = 'POST'; f.action = CLOUD_URL; f.target = 'hiddenCloudFrame';
+    f.style.display = 'none';
+    var i1 = document.createElement('input'); i1.name='key'; i1.value=key; f.appendChild(i1);
+    var i2 = document.createElement('input'); i2.name='data'; i2.value=JSON.stringify(value); f.appendChild(i2);
+    document.body.appendChild(f); f.submit(); f.remove();
+  }catch(e){}
+}
+function cloudPull(){
+  return new Promise(function(resolve){
+    if(!CLOUD_URL){ resolve(null); return; }
+    var cb = '__dcb' + Math.floor(Math.random()*1000000);
+    var sc = document.createElement('script');
+    var done = false;
+    window[cb] = function(data){
+      if(done) return; done = true;
+      try{ delete window[cb]; }catch(e){ window[cb]=undefined; }
+      sc.remove(); resolve(data);
+    };
+    sc.onerror = function(){
+      if(done) return; done = true;
+      try{ delete window[cb]; }catch(e){ window[cb]=undefined; }
+      sc.remove(); resolve(null);
+    };
+    sc.src = CLOUD_URL + (CLOUD_URL.indexOf('?')>=0?'&':'?') + 'action=get&cb=' + cb;
+    document.body.appendChild(sc);
+    setTimeout(function(){
+      if(!done){ done = true; try{ delete window[cb]; }catch(e){} sc.remove(); resolve(null); }
+    }, 8000);
+  });
+}
+function cloudApply(data){
+  if(!data || typeof data !== 'object') return;
+  if(data.students && typeof data.students==='object' && !Array.isArray(data.students))
+    localStorage.setItem(K_STU, JSON.stringify(data.students));
+  if(data.commands && typeof data.commands==='object' && !Array.isArray(data.commands))
+    localStorage.setItem(K_CMD, JSON.stringify(data.commands));
+  if(data.settings && typeof data.settings==='object' && !Array.isArray(data.settings))
+    localStorage.setItem(K_SET, JSON.stringify(data.settings));
+}
+function cloudPullAndApply(){ return cloudPull().then(cloudApply).catch(function(){}); }
+function cloudSave(key, localObj){
+  // 先拉雲端最新，合併本地改動再推送，避免多台設備互相覆蓋
+  cloudPull().then(function(cloud){
+    if(cloud && typeof cloud[key]==='object' && !Array.isArray(cloud[key])){
+      var merged = {};
+      for(var k in cloud[key]) merged[k] = cloud[key][k];
+      for(var k2 in localObj) merged[k2] = localObj[k2];
+      cloudPost(key, merged);
+    } else {
+      cloudPost(key, localObj);
+    }
+  }).catch(function(){ cloudPost(key, localObj); });
+}
 
 /* 迁移旧数据结构 */
 function migrateStudent(me){
@@ -619,7 +686,7 @@ function getCommands(){
   try{ var c = JSON.parse(localStorage.getItem(K_CMD)); return (c && typeof c==='object') ? c : {}; }
   catch(e){ return {}; }
 }
-function saveCommands(c){ localStorage.setItem(K_CMD, JSON.stringify(c)); }
+function saveCommands(c){ localStorage.setItem(K_CMD, JSON.stringify(c)); cloudSave('commands', c); }
 function getCommand(level){ return getCommands()[level] || null; }
 function publishCommand(level, durationSec){
   var all = getCommands();
@@ -1925,22 +1992,25 @@ window.addEventListener('storage', function(e){
 
 /* ===== 啟動 ===== */
 (function(){
-  if(!localStorage.getItem(K_SET)){
-    saveSettings({ levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' });
-  }
-  try{
-    var saved = JSON.parse(sessionStorage.getItem(K_SES));
-    if(saved && saved.id){
-      var all = getStudents();
-      if(all[saved.id]){
-        state.student = saved;
-        all[saved.id].lastSeen = Date.now();
-        saveStudents(all);
-        enterMap();
-      }
+  setInterval(cloudPullAndApply, 15000);   // 每 15 秒自動同步一次雲端
+  cloudPullAndApply().then(function(){
+    if(!localStorage.getItem(K_SET)){
+      saveSettings({ levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' });
     }
-  }catch(e){}
-  console.log('[除法大挑戰] 已啟動');
+    try{
+      var saved = JSON.parse(sessionStorage.getItem(K_SES));
+      if(saved && saved.id){
+        var all = getStudents();
+        if(all[saved.id]){
+          state.student = saved;
+          all[saved.id].lastSeen = Date.now();
+          saveStudents(all);
+          enterMap();
+        }
+      }
+    }catch(e){}
+    console.log('[除法大挑戰] 已啟動');
+  });
 })();
 </script>
 </body>
