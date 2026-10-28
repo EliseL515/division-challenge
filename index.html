@@ -564,7 +564,7 @@ function toast(msg){
 }
 
 /* ===== 儲存 ===== */
-var K_STU='div_students', K_ANS='div_answers', K_SET='div_settings', K_SES='div_session', K_CMD='div_commands';
+var K_STU='div_students', K_ANS='div_answers', K_SET='div_settings', K_SES='div_session', K_CMD='div_commands', K_WRONG='div_wrong';
 
 function getSettings(){
   try{
@@ -590,6 +590,8 @@ function getStudents(){ try{ return JSON.parse(localStorage.getItem(K_STU))||{};
 function saveStudents(s){ localStorage.setItem(K_STU, JSON.stringify(s)); cloudSave('students', s); }
 function getAnswers(){ try{ return JSON.parse(localStorage.getItem(K_ANS))||[]; }catch(e){ return []; } }
 function saveAnswers(a){ localStorage.setItem(K_ANS, JSON.stringify(a)); }
+function getWrong(){ try{ return JSON.parse(localStorage.getItem(K_WRONG))||[]; }catch(e){ return []; } }
+function saveWrong(a){ localStorage.setItem(K_WRONG, JSON.stringify(a)); cloudSaveWrong(a); }
 
 /* ===== 雲端同步（Google Apps Script Web App） ===== */
 var CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxmabWGfuVuqd9uwgkEYKaI6mMg6ZE4-xbsW1NoUc6iq7G9rTJvW2RDOW-PoXgFduYRUw/exec';
@@ -642,6 +644,8 @@ function cloudApply(data){
     localStorage.setItem(K_CMD, JSON.stringify(data.commands));
   if(data.settings && typeof data.settings==='object' && !Array.isArray(data.settings))
     localStorage.setItem(K_SET, JSON.stringify(data.settings));
+  if(Array.isArray(data.wrong))
+    localStorage.setItem(K_WRONG, JSON.stringify(data.wrong));
 }
 function cloudPullAndApply(){ return cloudPull().then(cloudApply).catch(function(){}); }
 function cloudSave(key, localObj){
@@ -656,6 +660,20 @@ function cloudSave(key, localObj){
       cloudPost(key, localObj);
     }
   }).catch(function(){ cloudPost(key, localObj); });
+}
+function cloudSaveWrong(localArr){
+  // 錯題事件是陣列：雲端與本地合併、去重、上限 2000 條
+  cloudPull().then(function(cloud){
+    var cloudArr = (cloud && Array.isArray(cloud.wrong)) ? cloud.wrong : [];
+    var seen = {}, merged = [];
+    cloudArr.concat(localArr).forEach(function(w){
+      var k = w.sid+'|'+w.dividend+'|'+w.divisor+'|'+w.uq+'|'+w.ur+'|'+w.ts;
+      if(seen[k]) return; seen[k] = 1; merged.push(w);
+    });
+    merged.sort(function(a,b){ return a.ts-b.ts; });
+    if(merged.length > 2000) merged = merged.slice(merged.length-2000);
+    cloudPost('wrong', merged);
+  }).catch(function(){ cloudPost('wrong', localArr); });
 }
 
 /* 迁移旧数据结构 */
@@ -1217,6 +1235,14 @@ function submit(){
     var hc2=$('hudCombo'); if(hc2) hc2.textContent = '0';
     for(var k2 in state.slots) state.slots[k2].classList.add('wrong');
 
+    // 記錄錯題事件（含日後答對也算錯過的題），同步到雲端供老師分析
+    var wr = getWrong();
+    wr.push({sid:state.student.id, name:state.student.name, group:state.student.group,
+      level:state.level, dividend:c.dividend, divisor:c.divisor,
+      q:c.quotient, r:c.remainder, hr:c.hasRemainder,
+      uq:uQ, ur:uR, ts:Date.now()});
+    saveWrong(wr);
+
     var tipHtml = buildHint(c, state.attemptCount);
     var yourAnswer = c.hasRemainder ? (uQ + ' 餘 ' + uR) : String(uQ);
 
@@ -1754,6 +1780,8 @@ function renderAttempts(){
     if(!confirm('確定要清除所有學生資料、成績與作答紀錄嗎？此操作無法復原。')) return;
     if(!confirm('再次確認：所有資料都會被刪除。')) return;
     localStorage.removeItem(K_STU); localStorage.removeItem(K_ANS); localStorage.removeItem(K_CMD);
+    localStorage.removeItem(K_WRONG);
+    cloudPost('wrong', []); cloudPost('students', {}); cloudPost('commands', {});
     toast('已清除所有資料'); renderTeacherMenu();
   });
 })();
@@ -1826,30 +1854,31 @@ function renderAnalysis(){
   }
 
   var g = {};
-  answers.forEach(function(a){
+  getWrong().forEach(function(a){
     var key = a.dividend+'÷'+a.divisor+'_'+a.level;
     if(!g[key]) g[key] = {display:a.dividend+' ÷ '+a.divisor,
-      correct:a.hasRemainder?(a.quotient+' 餘 '+a.remainder):String(a.quotient), level:a.level, total:0, wrong:0};
-    g[key].total++;
-    if(!a.correct) g[key].wrong++;
+      correct:a.hr?(a.q+' 餘 '+a.r):String(a.q), level:a.level, times:0, students:{}};
+    g[key].times++;
+    g[key].students[a.sid] = a.name;
   });
-  var wrongList = Object.keys(g).map(function(k){return g[k];})
-    .filter(function(r){return r.wrong>0;})
-    .map(function(r){ r.rate = r.wrong/r.total; return r; })
-    .sort(function(a,b){ return b.rate-a.rate || b.wrong-a.wrong; })
+  var wrongList = Object.keys(g).map(function(k){
+      var r = g[k]; r.people = Object.keys(r.students).length; return r;
+    })
+    .sort(function(a,b){ return b.times-a.times || b.people-a.people; })
     .slice(0,10);
 
   var wc = $('anaWrongCount');
-  if(wc) wc.textContent = Object.keys(g).filter(function(k){return g[k].wrong>0;}).length+' 題';
+  if(wc) wc.textContent = Object.keys(g).length+' 題';
   var wt = $('anaWrongTable');
   if(wt){
     if(!wrongList.length){ wt.innerHTML = '<tr><td class="empty">目前沒有答錯紀錄 🎉</td></tr>'; }
     else {
-      wt.innerHTML = '<thead><tr><th>題目</th><th>正確答案</th><th>關卡</th><th>錯誤 / 總作答</th><th>錯誤率</th></tr></thead><tbody>'+
+      wt.innerHTML = '<thead><tr><th>題目</th><th>正確答案</th><th>關卡</th><th>答錯次數</th><th>答錯人數</th></tr></thead><tbody>'+
         wrongList.map(function(r){
           return '<tr><td><b>'+esc(r.display)+'</b></td><td style="color:var(--green-d)">'+esc(r.correct)+'</td>'+
-            '<td>'+LEVELS[r.level].title+'</td><td>'+r.wrong+' / '+r.total+'</td>'+
-            '<td style="color:var(--red);font-weight:900">'+Math.round(r.rate*100)+'%</td></tr>';
+            '<td>'+LEVELS[r.level].title+'</td>'+
+            '<td style="color:var(--red);font-weight:900">'+r.times+' 次</td>'+
+            '<td>'+r.people+' 人</td></tr>';
         }).join('')+'</tbody>';
     }
   }
