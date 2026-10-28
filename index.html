@@ -2021,7 +2021,18 @@ window.addEventListener('storage', function(e){
 
 /* ===== 啟動 ===== */
 (function(){
-  setInterval(cloudPullAndApply, 15000);   // 每 15 秒自動同步一次雲端
+  setInterval(function(){
+    cloudPullAndApply().then(function(){
+      var an = $('screen-analysis');
+      if(an && an.classList.contains('active')) renderAnalysis();
+      var st = $('screen-teacher-students');
+      if(st && st.classList.contains('active')) renderStudentTable();
+      var at = $('screen-teacher-attempts');
+      if(at && at.classList.contains('active')) renderAttempts();
+      var sc = $('screen-teacher-scores');
+      if(sc && sc.classList.contains('active')) renderGroupTables();
+    });
+  }, 15000);   // 每 15 秒自動同步一次雲端，老師後台保持即時更新
   cloudPullAndApply().then(function(){
     if(!localStorage.getItem(K_SET)){
       saveSettings({ levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' });
