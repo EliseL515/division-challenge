@@ -633,7 +633,7 @@ function cloudPull(){
     document.body.appendChild(sc);
     setTimeout(function(){
       if(!done){ done = true; try{ delete window[cb]; }catch(e){} sc.remove(); resolve(null); }
-    }, 8000);
+    }, 15000);
   });
 }
 function cloudApply(data){
@@ -648,23 +648,34 @@ function cloudApply(data){
     localStorage.setItem(K_WRONG, JSON.stringify(data.wrong));
 }
 function cloudPullAndApply(){ return cloudPull().then(cloudApply).catch(function(){}); }
-function cloudSave(key, localObj){
-  // 先拉雲端最新，合併本地改動再推送，避免多台設備互相覆蓋
+function cloudSave(key, localObj, tries){
+  tries = tries || 0;
+  // 先拉雲端最新再推送；拉取失敗時絕不覆蓋雲端，延遲重試避免把其他學生洗掉
   cloudPull().then(function(cloud){
-    if(cloud && typeof cloud[key]==='object' && !Array.isArray(cloud[key])){
+    if(!cloud){ if(tries < 3) setTimeout(function(){ cloudSave(key, localObj, tries+1); }, 3000); return; }
+    var cloudObj = cloud[key];
+    if(cloudObj && typeof cloudObj==='object' && !Array.isArray(cloudObj)){
       var merged = {};
-      for(var k in cloud[key]) merged[k] = cloud[key][k];
-      for(var k2 in localObj) merged[k2] = localObj[k2];
+      for(var k in cloudObj) merged[k] = cloudObj[k];
+      for(var k2 in localObj){
+        // 學生記錄：較新的一筆獲勝，避免本機舊快照回滾雲端新成績
+        var old = merged[k2], fresh = localObj[k2];
+        if(!old || (fresh.lastSeen||fresh.loginAt||0) >= (old.lastSeen||old.loginAt||0)) merged[k2] = fresh;
+        else if(fresh.id && !old) merged[k2] = fresh;
+      }
       cloudPost(key, merged);
     } else {
       cloudPost(key, localObj);
     }
-  }).catch(function(){ cloudPost(key, localObj); });
+  }).catch(function(){
+    if(tries < 3) setTimeout(function(){ cloudSave(key, localObj, tries+1); }, 3000);
+  });
 }
-function cloudSaveWrong(localArr){
-  // 錯題事件是陣列：雲端與本地合併、去重、上限 2000 條
+function cloudSaveWrong(localArr, tries){
+  tries = tries || 0;
   cloudPull().then(function(cloud){
-    var cloudArr = (cloud && Array.isArray(cloud.wrong)) ? cloud.wrong : [];
+    if(!cloud){ if(tries < 3) setTimeout(function(){ cloudSaveWrong(localArr, tries+1); }, 3000); return; }
+    var cloudArr = Array.isArray(cloud.wrong) ? cloud.wrong : [];
     var seen = {}, merged = [];
     cloudArr.concat(localArr).forEach(function(w){
       var k = w.sid+'|'+w.dividend+'|'+w.divisor+'|'+w.uq+'|'+w.ur+'|'+w.ts;
@@ -673,7 +684,9 @@ function cloudSaveWrong(localArr){
     merged.sort(function(a,b){ return a.ts-b.ts; });
     if(merged.length > 2000) merged = merged.slice(merged.length-2000);
     cloudPost('wrong', merged);
-  }).catch(function(){ cloudPost('wrong', localArr); });
+  }).catch(function(){
+    if(tries < 3) setTimeout(function(){ cloudSaveWrong(localArr, tries+1); }, 3000);
+  });
 }
 
 /* 迁移旧数据结构 */
