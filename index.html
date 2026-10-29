@@ -648,6 +648,36 @@ function cloudApply(data){
     localStorage.setItem(K_WRONG, JSON.stringify(data.wrong));
 }
 function cloudPullAndApply(){ return cloudPull().then(cloudApply).catch(function(){}); }
+/* 逐字段合併兩筆學生記錄：每關分數取高、lastSeen/loginAt 取新、attempts 按時間戳合併，
+   確保任何一台設備的舊快照都不會把別人的新成績覆蓋回 0 */
+function mergeStudent(oldR, freshR){
+  if(!oldR) return freshR;
+  var out = {};
+  for(var k in oldR) out[k] = oldR[k];
+  for(var k in freshR){
+    if(k === 'levelScores'){
+      out.levelScores = out.levelScores || {};
+      var lo = oldR.levelScores||{}, lf = freshR.levelScores||{};
+      for(var lv in lf){ out.levelScores[lv] = Math.max(out.levelScores[lv]||0, lf[lv]||0); }
+    } else if(k === 'attempts'){
+      out.attempts = out.attempts || {};
+      for(var lv in freshR.attempts){
+        var oldList = out.attempts[lv]||[], newList = freshR.attempts[lv]||[];
+        var seen = {};
+        oldList.forEach(function(a){ seen[a.ts+'_'+a.score]=1; });
+        newList.forEach(function(a){ if(!seen[a.ts+'_'+a.score]) oldList.push(a); });
+        out.attempts[lv] = oldList;
+      }
+    } else if(k === 'lastSeen' || k === 'loginAt' || k === 'finishedAt'){
+      out[k] = Math.max(oldR[k]||0, freshR[k]||0);
+    } else if(k === 'finished'){
+      out.finished = oldR.finished || freshR.finished;
+    } else {
+      out[k] = freshR[k];
+    }
+  }
+  return out;
+}
 function cloudSave(key, localObj, tries){
   tries = tries || 0;
   // 先拉雲端最新再推送；拉取失敗時絕不覆蓋雲端，延遲重試避免把其他學生洗掉
@@ -658,10 +688,8 @@ function cloudSave(key, localObj, tries){
       var merged = {};
       for(var k in cloudObj) merged[k] = cloudObj[k];
       for(var k2 in localObj){
-        // 學生記錄：較新的一筆獲勝，避免本機舊快照回滾雲端新成績
-        var old = merged[k2], fresh = localObj[k2];
-        if(!old || (fresh.lastSeen||fresh.loginAt||0) >= (old.lastSeen||old.loginAt||0)) merged[k2] = fresh;
-        else if(fresh.id && !old) merged[k2] = fresh;
+        if(merged[k2]) merged[k2] = mergeStudent(merged[k2], localObj[k2]);
+        else merged[k2] = localObj[k2];
       }
       cloudPost(key, merged);
     } else {
@@ -1087,6 +1115,7 @@ function startGame(level){
   state.correct = 0; state.attempted = 0;
   state.locked = false; state.gameOver = false;
   state.seen = new Set();
+  state.liveTick = 0;
   state.totalTime = cmd.durationSec;
   state.endTime = cmd.startedAt + cmd.durationSec * 1000;
   state.timeLeft = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
@@ -1102,6 +1131,9 @@ function startGame(level){
   state.timerInterval = setInterval(function(){
     var r = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
     state.timeLeft = r; updateTimer();
+    // 每 10 秒把做題中的即時分數同步到雲端，老師後台可邊看邊更新
+    state.liveTick = (state.liveTick||0) + 1;
+    if(state.liveTick % 20 === 0 && !state.gameOver){ pushLiveScore(); }
     if(r <= 0){ clearInterval(state.timerInterval); finishGame(); }
   }, 500);
   tone(523,0.1,'sine',0.05);
@@ -1269,6 +1301,18 @@ function submit(){
     }
     sfxBad();
   }
+}
+/* 遊戲中即時同步目前分數到老師後台（不另開新嘗試記錄，只更新最佳分數） */
+function pushLiveScore(){
+  if(!state.student || state.gameOver) return;
+  var all = getStudents();
+  var me = all[state.student.id];
+  if(!me) return;
+  me = migrateStudent(me);
+  if(state.score > (me.levelScores[state.level]||0)) me.levelScores[state.level] = state.score;
+  me.lastSeen = Date.now();
+  me.currentLevel = Math.max(me.currentLevel||1, state.level);
+  saveStudents(all);
 }
 function finishGame(){
   if(state.gameOver) return;
