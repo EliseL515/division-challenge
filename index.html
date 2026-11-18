@@ -1366,13 +1366,13 @@ function startGame(level){
     if(!state.gameOver && cmdNow && cmdNow.endedAt){ forceEndByTeacher(); return; }
     if(!state.gameOver && cmdNow && cmdNow.paused && !state.paused){ enterPause(); }
     if(!state.gameOver && cmdNow && !cmdNow.paused && state.paused){ exitPause(); }
+    /* 心跳：即使暫停中也要持續回報，老師端才看得到狀態 */
+    state.liveTick = (state.liveTick||0) + 1;
+    if(state.liveTick % 20 === 0 && !state.gameOver){ pushLiveNow(); }
     if(state.paused) return;
 
     var r = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
     state.timeLeft = r; updateTimer();
-    /* 每 6 秒把做題中的即時分數同步到雲端，老師「即時戰況」可邊看邊更新 */
-    state.liveTick = (state.liveTick||0) + 1;
-    if(state.liveTick % 20 === 0 && !state.gameOver){ pushLiveNow(); }
     if(r <= 0){ clearInterval(state.timerInterval); finishGame(); }
   }, 500);
   tone(523,0.1,'sine',0.05);
