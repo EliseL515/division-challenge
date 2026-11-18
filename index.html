@@ -309,6 +309,13 @@
       <button type="button" class="key" data-num="0">0</button>
       <button type="button" class="key confirm" data-act="submit">確認 ✓</button>
     </div>
+    <div id="pauseOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.86);z-index:9999;align-items:center;justify-content:center;padding:24px;">
+      <div style="background:#fff;color:#0f172a;border-radius:22px;padding:30px 24px;max-width:330px;text-align:center;box-shadow:0 18px 46px rgba(0,0,0,.4);">
+        <div id="pauseIcon" style="font-size:46px;line-height:1;">⏸</div>
+        <h2 id="pauseTitle" style="margin:12px 0 8px;font-size:21px;">老師暫停了遊戲</h2>
+        <p id="pauseText" style="margin:0;color:#64748b;font-size:14px;line-height:1.6;">請稍等，老師繼續後會自動恢復</p>
+      </div>
+    </div>
   </section>
 
   <!-- 結算 -->
@@ -389,9 +396,13 @@
         <div class="m-icon" style="background:linear-gradient(135deg,#FFE870,#FFD93D);">🎮</div>
         <div class="m-title">關卡設定</div><div class="m-desc">發布指令 · 起始關卡 · 時長</div>
       </button>
+      <button type="button" class="menu-card" id="btnGoLive">
+        <div class="m-icon" style="background:linear-gradient(135deg,#7CF7C0,#2ED47A);">⚡</div>
+        <div class="m-title">即時戰況</div><div class="m-desc">邊做邊看 · 目前分數</div>
+      </button>
       <button type="button" class="menu-card" id="btnGoScores">
         <div class="m-icon" style="background:linear-gradient(135deg,#6FE3DA,#4ECDC4);">📊</div>
-        <div class="m-title">學生比分</div><div class="m-desc">1 組 · 2 組最高分排行</div>
+        <div class="m-title">歷史成績</div><div class="m-desc">1 組 · 2 組最高分排行</div>
       </button>
       <button type="button" class="menu-card" id="btnGoStudents">
         <div class="m-icon" style="background:linear-gradient(135deg,#FFB65C,#FF9F1C);">👥</div>
@@ -450,6 +461,27 @@
         <div class="duration-row"><label style="width:70px;">第 3 關</label><input type="number" id="dur3" class="small-input" min="1" max="30" step="1"><span style="color:var(--ink2);font-size:14px;font-weight:800;">分鐘</span></div>
       </div>
       <button type="button" class="btn primary" id="btnSaveDurations">💾 儲存時長</button>
+    </div>
+  </section>
+
+  <!-- 老師：即時戰況 -->
+  <section id="screen-teacher-live" class="screen">
+    <div class="hud">
+      <button type="button" class="icon-btn" id="btnBackFromLive">← 主選單</button>
+      <div class="hud-spacer"></div>
+      <div class="hud-item">⚡ 即時戰況</div>
+    </div>
+    <div class="teacher-section" style="border-color:#7CF7C0;background:linear-gradient(160deg,#F4FFFA,#E9FFF5);">
+      <h3>⚡ 即時分數 <span class="tag">每 4 秒自動更新</span></h3>
+      <p>學生做題時每 10 秒自動回報，這裡會邊做邊更新。</p>
+      <div class="stat-grid" id="liveSummary" style="margin-bottom:14px;"></div>
+      <div class="group-cols">
+        <div class="group-box"><h4><span><span class="pill g1">1 組</span></span></h4>
+          <div class="table-wrap"><table class="data-table" id="live1Table"></table></div></div>
+        <div class="group-box"><h4><span><span class="pill g2">2 組</span></span></h4>
+          <div class="table-wrap"><table class="data-table" id="live2Table"></table></div></div>
+      </div>
+      <div class="hint">💡 這裡只顯示本輪即時作答；歷屆最高分請到「歷史成績」頁</div>
     </div>
   </section>
 
@@ -564,7 +596,8 @@ function toast(msg){
 }
 
 /* ===== 儲存 ===== */
-var K_STU='div_students', K_ANS='div_answers', K_SET='div_settings', K_SES='div_session', K_CMD='div_commands', K_WRONG='div_wrong';
+var K_STU='div_students', K_ANS='div_answers', K_SET='div_settings', K_SES='div_session', K_CMD='div_commands', K_WRONG='div_wrong',
+    K_WRONG_ALL='div_wrong_all', K_META='div_meta';
 
 function getSettings(){
   try{
@@ -585,13 +618,19 @@ function getSettings(){
       teacherPassword: (typeof r.teacherPassword==='string' && r.teacherPassword.length>0) ? r.teacherPassword : '1234' };
   }catch(e){ return { levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' }; }
 }
-function saveSettings(s){ localStorage.setItem(K_SET, JSON.stringify(s)); cloudSave('settings', s); }
+function saveSettings(s){ s._ts = Date.now(); localStorage.setItem(K_SET, JSON.stringify(s)); cloudPost('set', s); }
 function getStudents(){ try{ return JSON.parse(localStorage.getItem(K_STU))||{}; }catch(e){ return {}; } }
-function saveStudents(s){ localStorage.setItem(K_STU, JSON.stringify(s)); cloudSave('students', s); }
+/* 本機快取 + 只推送自己那一筆雲端記錄（再也不整份覆蓋別人的資料） */
+function saveStudents(s){ localStorage.setItem(K_STU, JSON.stringify(s)); pushMyRecord(null, false); }
 function getAnswers(){ try{ return JSON.parse(localStorage.getItem(K_ANS))||[]; }catch(e){ return []; } }
 function saveAnswers(a){ localStorage.setItem(K_ANS, JSON.stringify(a)); }
 function getWrong(){ try{ return JSON.parse(localStorage.getItem(K_WRONG))||[]; }catch(e){ return []; } }
-function saveWrong(a){ localStorage.setItem(K_WRONG, JSON.stringify(a)); cloudSaveWrong(a); }
+/* 全班錯題（由雲端聚合，老師分析用） */
+function getWrongAll(){
+  try{ var a=JSON.parse(localStorage.getItem(K_WRONG_ALL)); if(Array.isArray(a)) return a; }catch(e){}
+  return getWrong();
+}
+function saveWrong(a){ localStorage.setItem(K_WRONG, JSON.stringify(a)); pushMyWrong(); }
 
 /* ===== 雲端同步（Google Apps Script Web App） ===== */
 var CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxmabWGfuVuqd9uwgkEYKaI6mMg6ZE4-xbsW1NoUc6iq7G9rTJvW2RDOW-PoXgFduYRUw/exec';
@@ -638,14 +677,124 @@ function cloudPull(){
 }
 function cloudApply(data){
   if(!data || typeof data !== 'object') return;
-  if(data.students && typeof data.students==='object' && !Array.isArray(data.students))
-    localStorage.setItem(K_STU, JSON.stringify(data.students));
-  if(data.commands && typeof data.commands==='object' && !Array.isArray(data.commands))
-    localStorage.setItem(K_CMD, JSON.stringify(data.commands));
-  if(data.settings && typeof data.settings==='object' && !Array.isArray(data.settings))
-    localStorage.setItem(K_SET, JSON.stringify(data.settings));
-  if(Array.isArray(data.wrong))
-    localStorage.setItem(K_WRONG, JSON.stringify(data.wrong));
+
+  /* 老師設定 / 指令：帶時間戳，舊資料不會蓋掉剛改的新資料 */
+  var setObj = data.set || data.settings;
+  if(setObj && typeof setObj==='object' && !Array.isArray(setObj)){
+    var lSetTs = 0; try{ lSetTs = Number((JSON.parse(localStorage.getItem(K_SET)||'{}')._ts)||0); }catch(e){}
+    if(Number(setObj._ts||0) >= lSetTs) localStorage.setItem(K_SET, JSON.stringify(setObj));
+  }
+  var cmdObj = data.cmds || data.commands;
+  if(cmdObj && typeof cmdObj==='object' && !Array.isArray(cmdObj)){
+    var lCmdTs = 0; try{ lCmdTs = Number((JSON.parse(localStorage.getItem(K_CMD)||'{}')._ts)||0); }catch(e){}
+    if(Number(cmdObj._ts||0) >= lCmdTs) localStorage.setItem(K_CMD, JSON.stringify(cmdObj));
+  }
+
+  /* 老師重設：用代際 gen 宣告，所有裝置自動跟隨 */
+  var cm = data.meta || {};
+  var lm = getMeta();
+  if(Number(cm.gen||0) > Number(lm.gen||0)) applyReset(cm.mode==='all'?'all':'scores', Number(cm.gen));
+
+  var effGen = myGen();
+  var modeNow = getMeta().mode || 'scores';
+
+  /* 聚合每位學生的獨立記錄（stu_<id>）＋舊版整份 students */
+  var agg = {};
+  if(data.students && typeof data.students==='object' && !Array.isArray(data.students)){
+    for(var k0 in data.students){ agg[k0] = data.students[k0]; }
+  }
+  for(var key in data){
+    if(key.indexOf('stu_')!==0) continue;
+    var sid = key.slice(4), rec = data[key];
+    if(!rec || typeof rec!=='object') continue;
+    if(rec.deleted){ delete agg[sid]; continue; }
+    agg[sid] = rec;
+  }
+
+  var out = {};
+  for(var id2 in agg){
+    var r = migrateStudent(agg[id2]);
+    var rg = Number(r.gen||0);
+    if(effGen && rg < effGen){
+      if(modeNow === 'all') continue;           // 清除所有資料 → 整筆作廢
+      r.levelScores = {1:0,2:0,3:0};            // 只重設成績 → 分數歸零
+      r.attempts = {1:[],2:[],3:[]};
+      r.finished = false; r.finishedAt = null; r.live = null;
+    }
+    out[id2] = r;
+  }
+  /* 自己那筆取「較完整」的一份，避免剛考到的分數被雲端稍舊的副本蓋掉 */
+  if(state.student && out[state.student.id]){
+    var localMe = getStudents()[state.student.id];
+    if(localMe) out[state.student.id] = mergeStudent(localMe, out[state.student.id]);
+  }
+  localStorage.setItem(K_STU, JSON.stringify(out));
+
+  /* 錯題：每位學生 wr_<id> ＋ 舊版 wrong，聚合成每題一筆（含次數） */
+  var wmap = {}, wlist = [];
+  function pushW(x0){
+    var w = normWrong(x0); if(!w) return;
+    if(effGen && w.ts && w.ts < effGen) return;
+    var k = (w.sid||'')+'|'+w.level+'|'+w.dividend+'|'+w.divisor;
+    if(!wmap[k]) wmap[k] = {sid:w.sid, level:w.level, dividend:w.dividend, divisor:w.divisor,
+      q:w.q, r:w.r, hr:w.hr, ts:w.ts||0, count:0};
+    wmap[k].count += (w.count||1);
+    if((w.ts||0) > wmap[k].ts) wmap[k].ts = w.ts;
+  }
+  if(Array.isArray(data.wrong)) data.wrong.forEach(pushW);
+  for(var kw in data){
+    if(kw.indexOf('wr_')!==0) continue;
+    if(Array.isArray(data[kw])) data[kw].forEach(pushW);
+  }
+  for(var kk in wmap) wlist.push(wmap[kk]);
+  localStorage.setItem(K_WRONG_ALL, JSON.stringify(wlist));
+}
+
+/* 錯題記錄正規化：兼容新的短欄位與舊格式 */
+function normWrong(x){
+  if(!x || typeof x!=='object') return null;
+  if(x.a !== undefined){
+    return {sid:x.i, level:Number(x.l)||1, dividend:x.a, divisor:x.b, q:x.q, r:x.r,
+      hr:!!x.h, ts:Number(x.t)||0, count:Number(x.c)||1};
+  }
+  return {sid:x.sid, level:Number(x.level)||1, dividend:x.dividend, divisor:x.divisor,
+    q:(x.quotient!==undefined?x.quotient:x.q),
+    r:(x.remainder!==undefined?x.remainder:x.r),
+    hr:(x.hasRemainder!==undefined?!!x.hasRemainder:!!x.hr),
+    ts:Number(x.ts)||0, count:Number(x.count)||1};
+}
+
+/* 老師重設時，各裝置自動跟隨 */
+function applyReset(mode, gen){
+  saveMeta({gen: gen, mode: mode});
+  if(currentScreen() === 'screen-game'){
+    state.gameOver = true;
+    clearInterval(state.timerInterval); clearTimeout(state.nextTimer);
+  }
+  localStorage.removeItem(K_ANS);
+  localStorage.removeItem(K_WRONG); localStorage.removeItem(K_WRONG_ALL);
+
+  if(mode === 'all'){
+    localStorage.removeItem(K_STU); localStorage.removeItem(K_CMD);
+    state.student = null;
+    try{ sessionStorage.removeItem(K_SES); }catch(e){}
+    var scr = currentScreen();
+    if(scr==='screen-game'||scr==='screen-result'||scr==='screen-levels'||scr==='screen-report'){
+      show('login');
+    }
+    toast('老師已清除所有資料，請重新登入');
+  } else {
+    var all = getStudents();
+    Object.keys(all).forEach(function(k){
+      all[k].levelScores = {1:0,2:0,3:0};
+      all[k].attempts = {1:[],2:[],3:[]};
+      all[k].finished = false; all[k].finishedAt = null;
+      all[k].live = null; all[k].gen = gen;
+    });
+    localStorage.setItem(K_STU, JSON.stringify(all));
+    if(currentScreen() === 'screen-game'){ show('levels'); enterMap(); }
+    toast('老師已重設所有學生成績');
+  }
 }
 function cloudPullAndApply(){ return cloudPull().then(cloudApply).catch(function(){}); }
 /* 逐字段合併兩筆學生記錄：每關分數取高、lastSeen/loginAt 取新、attempts 按時間戳合併，
@@ -678,43 +827,90 @@ function mergeStudent(oldR, freshR){
   }
   return out;
 }
-function cloudSave(key, localObj, tries){
-  tries = tries || 0;
-  // 先拉雲端最新再推送；拉取失敗時絕不覆蓋雲端，延遲重試避免把其他學生洗掉
-  cloudPull().then(function(cloud){
-    if(!cloud){ if(tries < 3) setTimeout(function(){ cloudSave(key, localObj, tries+1); }, 3000); return; }
-    var cloudObj = cloud[key];
-    if(cloudObj && typeof cloudObj==='object' && !Array.isArray(cloudObj)){
-      var merged = {};
-      for(var k in cloudObj) merged[k] = cloudObj[k];
-      for(var k2 in localObj){
-        if(merged[k2]) merged[k2] = mergeStudent(merged[k2], localObj[k2]);
-        else merged[k2] = localObj[k2];
-      }
-      cloudPost(key, merged);
-    } else {
-      cloudPost(key, localObj);
-    }
-  }).catch(function(){
-    if(tries < 3) setTimeout(function(){ cloudSave(key, localObj, tries+1); }, 3000);
-  });
+/* 代際 meta：老師每次重設就換一代，舊代資料一律視為無效 */
+function getMeta(){ try{ var m=JSON.parse(localStorage.getItem(K_META)); return (m&&typeof m==='object')?m:{}; }catch(e){ return {}; } }
+function saveMeta(m){ localStorage.setItem(K_META, JSON.stringify(m)); }
+function myGen(){ return Number(getMeta().gen||0); }
+
+/* 只推送自己那名學生的記錄：小包、免先拉取、不會覆蓋其他學生 */
+var __lastPushAt = 0;
+var __lastPushSig = '';
+function pushMyRecord(live, force){
+  if(!state.student || !state.student.id) return;
+  var now = Date.now();
+  if(!force && now - __lastPushAt < 3000) return;
+  var all = getStudents();
+  var me = all[state.student.id];
+  if(!me) return;
+  me = migrateStudent(me);
+  me.gen = myGen();
+  me.lastSeen = now;
+  if(live) me.live = live;
+  /* 內容沒變就不重複上傳，減少雲端請求（心跳會用 force 定期補） */
+  var sig = me.id+'|'+totalOf(me)+'|'+attemptsTotal(me)+'|'+me.currentLevel+'|'+me.gen+'|'+(me.live?me.live.ts:0);
+  if(!force && sig === __lastPushSig && now - __lastPushAt < 10000) return;
+  __lastPushSig = sig;
+  __lastPushAt = now;
+  all[me.id] = me;
+  localStorage.setItem(K_STU, JSON.stringify(all));
+  cloudPost('stu_'+me.id, me);
 }
-function cloudSaveWrong(localArr, tries){
-  tries = tries || 0;
-  cloudPull().then(function(cloud){
-    if(!cloud){ if(tries < 3) setTimeout(function(){ cloudSaveWrong(localArr, tries+1); }, 3000); return; }
-    var cloudArr = Array.isArray(cloud.wrong) ? cloud.wrong : [];
-    var seen = {}, merged = [];
-    cloudArr.concat(localArr).forEach(function(w){
-      var k = w.sid+'|'+w.dividend+'|'+w.divisor+'|'+w.uq+'|'+w.ur+'|'+w.ts;
-      if(seen[k]) return; seen[k] = 1; merged.push(w);
+function pushMyWrong(){
+  if(!state.student || !state.student.id) return;
+  cloudPost('wr_'+state.student.id, getWrong());
+}
+
+/* 遊戲中即時回報目前進度（狀態有變或每 15 秒一次，減少雲端請求量） */
+var __liveSig = '', __liveSigAt = 0;
+function pushLiveNow(){
+  if(!state.student || state.gameOver) return;
+  var now0 = Date.now();
+  var sig = state.level+'|'+state.score+'|'+state.correct+'|'+state.attempted+'|'+(state.paused?1:0);
+  if(sig === __liveSig && now0 - __liveSigAt < 15000) return;
+  __liveSig = sig; __liveSigAt = now0;
+  var all = getStudents();
+  var me = all[state.student.id];
+  if(!me) return;
+  me = migrateStudent(me);
+  if(state.score > (me.levelScores[state.level]||0)) me.levelScores[state.level] = state.score;
+  me.currentLevel = Math.max(me.currentLevel||1, state.level);
+  me.lastSeen = Date.now();
+  me.gen = myGen();
+  me.live = {lv:state.level, score:state.score, correct:state.correct, attempted:state.attempted,
+             ts:Date.now(), paused:!!state.paused, done:false};
+  all[me.id] = me;
+  localStorage.setItem(K_STU, JSON.stringify(all));
+  cloudPost('stu_'+me.id, me);
+}
+
+/* 老師重設（scores＝只清成績 / all＝清光所有資料）
+   只寫一個 meta 代際，所有裝置拉到後自動跟隨，不會被舊資料復活 */
+function teacherReset(mode){
+  var gen = Date.now();
+  var meta = {gen: gen, mode: mode};
+  saveMeta(meta);
+  cloudPost('meta', meta);
+  cloudPost('wrong', []);                 // 順手清掉舊版大陣列，縮細雲端體積
+  localStorage.removeItem(K_ANS);
+  localStorage.removeItem(K_WRONG);
+  localStorage.removeItem(K_WRONG_ALL);
+  if(mode === 'all'){
+    localStorage.removeItem(K_STU);
+    localStorage.removeItem(K_CMD);
+    cloudPost('students', {});
+    var emptyCmds = {_ts: Date.now()};
+    localStorage.setItem(K_CMD, JSON.stringify(emptyCmds));
+    cloudPost('cmds', emptyCmds);
+  } else {
+    var all = getStudents();
+    Object.keys(all).forEach(function(k){
+      all[k].levelScores = {1:0,2:0,3:0};
+      all[k].attempts = {1:[],2:[],3:[]};
+      all[k].finished = false; all[k].finishedAt = null;
+      all[k].live = null; all[k].gen = gen;
     });
-    merged.sort(function(a,b){ return a.ts-b.ts; });
-    if(merged.length > 2000) merged = merged.slice(merged.length-2000);
-    cloudPost('wrong', merged);
-  }).catch(function(){
-    if(tries < 3) setTimeout(function(){ cloudSaveWrong(localArr, tries+1); }, 3000);
-  });
+    localStorage.setItem(K_STU, JSON.stringify(all));
+  }
 }
 
 /* 迁移旧数据结构 */
@@ -745,20 +941,47 @@ function getCommands(){
   try{ var c = JSON.parse(localStorage.getItem(K_CMD)); return (c && typeof c==='object') ? c : {}; }
   catch(e){ return {}; }
 }
-function saveCommands(c){ localStorage.setItem(K_CMD, JSON.stringify(c)); cloudSave('commands', c); }
+function saveCommands(c){ c._ts = Date.now(); localStorage.setItem(K_CMD, JSON.stringify(c)); cloudPost('cmds', c); }
 function getCommand(level){ return getCommands()[level] || null; }
 function publishCommand(level, durationSec){
   var all = getCommands();
-  all[level] = { startedAt: Date.now(), durationSec: durationSec };
+  all[level] = { startedAt: Date.now(), durationSec: durationSec,
+    paused:false, pausedAt:0, pausedTotal:0, endedAt:0 };
   saveCommands(all);
 }
 function clearCommand(level){
   var all = getCommands(); delete all[level]; saveCommands(all);
 }
+/* 老師暫停 / 繼續 / 立即結束 */
+function pauseCommand(level){
+  var all = getCommands(), cmd = all[level]; if(!cmd || cmd.endedAt) return;
+  cmd.paused = true; cmd.pausedAt = Date.now();
+  saveCommands(all);
+}
+function resumeCommand(level){
+  var all = getCommands(), cmd = all[level]; if(!cmd || !cmd.paused) return;
+  cmd.pausedTotal = (cmd.pausedTotal||0) + (Date.now() - (cmd.pausedAt||Date.now()));
+  cmd.paused = false; cmd.pausedAt = 0;
+  saveCommands(all);
+}
+function endCommand(level){
+  var all = getCommands(), cmd = all[level]; if(!cmd) return;
+  if(cmd.paused){ cmd.pausedTotal = (cmd.pausedTotal||0) + (Date.now() - (cmd.pausedAt||Date.now())); }
+  cmd.paused = false; cmd.pausedAt = 0;
+  cmd.endedAt = Date.now();
+  saveCommands(all);
+}
 function getCommandRemaining(level){
   var cmd = getCommand(level);
   if(!cmd || !cmd.startedAt) return 0;
-  return Math.max(0, Math.ceil((cmd.startedAt + cmd.durationSec*1000 - Date.now())/1000));
+  if(cmd.endedAt) return 0;
+  var ref = cmd.paused ? (cmd.pausedAt||Date.now()) : Date.now();
+  var elapsed = ref - cmd.startedAt - (cmd.pausedTotal||0);
+  return Math.max(0, Math.ceil((cmd.durationSec*1000 - elapsed)/1000));
+}
+function isCommandPaused(level){
+  var cmd = getCommand(level);
+  return !!(cmd && cmd.paused && !cmd.endedAt);
 }
 
 /* ===== 關卡 ===== */
@@ -859,6 +1082,7 @@ var SCREEN_IDS = {
   result:'screen-result', report:'screen-report',
   teacherLogin:'screen-teacher-login', teacher:'screen-teacher',
   teacherLevels:'screen-teacher-levels', teacherScores:'screen-teacher-scores',
+  teacherLive:'screen-teacher-live',
   teacherStudents:'screen-teacher-students', teacherAttempts:'screen-teacher-attempts',
   analysis:'screen-analysis'
 };
@@ -928,6 +1152,7 @@ var selectedGroup = '';
       state.student = {id:id, name:name, group:selectedGroup};
     }
     saveStudents(all);
+    pushMyRecord(null, true);
     sessionStorage.setItem(K_SES, JSON.stringify(state.student));
     sfxOk();
     enterMap();
@@ -972,6 +1197,7 @@ function enterMap(){
       var attempted = lvAttempts.length > 0;
       var skipped = lv < startLv;
       var cmdRemaining = getCommandRemaining(lv);
+      var cmdPaused = isCommandPaused(lv);
       var hasActiveCmd = cmdRemaining > 0;
       var cmdExisted = getCommand(lv) !== null;
 
@@ -980,6 +1206,10 @@ function enterMap(){
       if(skipped){
         status='⏭ 已跳過'; label='不開放';
         extra=' skipped';
+      } else if(cmdPaused){
+        status='⏸ 老師暫停中 · 剩餘 '+fmtClock(cmdRemaining);
+        label='暫停中';
+        extra=' ended';
       } else if(hasActiveCmd){
         // 有活跃指令，无论是否已完成都可挑战
         if(attempted){
@@ -1071,7 +1301,7 @@ function startAutoJump(level){
     if(autoJumpCountdown <= 0){
       clearInterval(autoJumpTimer); autoJumpTimer = null;
       autoJumpPending = false; hideAutoJumpBanner();
-      if(getCommandRemaining(level) > 0) startGame(level);
+      if(getCommandRemaining(level) > 0 && !isCommandPaused(level)) startGame(level);
     }
   }, 1000);
 }
@@ -1086,8 +1316,9 @@ function checkAutoJump(){
   if(!me){ cancelAutoJump(); return; }
   var s = getSettings();
   var startLv = s.startLevel || 1;
-  // 找第一个有活跃指令的关卡
+  // 找第一个有活跃指令的关卡（老師暫停中的關卡不自動跳轉）
   for(var lv = startLv; lv <= MAX_LEVEL; lv++){
+    if(isCommandPaused(lv)) continue;
     if(getCommandRemaining(lv) > 0){
       if(!autoJumpPending) startAutoJump(lv);
       return;
@@ -1116,6 +1347,7 @@ function startGame(level){
   state.locked = false; state.gameOver = false;
   state.seen = new Set();
   state.liveTick = 0;
+  state.paused = false; state.pausedAt = 0;
   state.totalTime = cmd.durationSec;
   state.endTime = cmd.startedAt + cmd.durationSec * 1000;
   state.timeLeft = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
@@ -1129,11 +1361,18 @@ function startGame(level){
   show('game');
   updateTimer();
   state.timerInterval = setInterval(function(){
+    /* 老師指令：暫停 / 立即結束（學生端會同步跟隨） */
+    var cmdNow = getCommand(state.level);
+    if(!state.gameOver && cmdNow && cmdNow.endedAt){ forceEndByTeacher(); return; }
+    if(!state.gameOver && cmdNow && cmdNow.paused && !state.paused){ enterPause(); }
+    if(!state.gameOver && cmdNow && !cmdNow.paused && state.paused){ exitPause(); }
+    if(state.paused) return;
+
     var r = Math.max(0, Math.ceil((state.endTime - Date.now()) / 1000));
     state.timeLeft = r; updateTimer();
-    // 每 10 秒把做題中的即時分數同步到雲端，老師後台可邊看邊更新
+    /* 每 6 秒把做題中的即時分數同步到雲端，老師「即時戰況」可邊看邊更新 */
     state.liveTick = (state.liveTick||0) + 1;
-    if(state.liveTick % 20 === 0 && !state.gameOver){ pushLiveScore(); }
+    if(state.liveTick % 20 === 0 && !state.gameOver){ pushLiveNow(); }
     if(r <= 0){ clearInterval(state.timerInterval); finishGame(); }
   }, 500);
   tone(523,0.1,'sine',0.05);
@@ -1280,12 +1519,20 @@ function submit(){
     var hc2=$('hudCombo'); if(hc2) hc2.textContent = '0';
     for(var k2 in state.slots) state.slots[k2].classList.add('wrong');
 
-    // 記錄錯題事件（含日後答對也算錯過的題），同步到雲端供老師分析
+    // 記錄錯題（同一題重複答錯只累加次數），每位學生獨立推送到雲端
     var wr = getWrong();
-    wr.push({sid:state.student.id, name:state.student.name, group:state.student.group,
-      level:state.level, dividend:c.dividend, divisor:c.divisor,
-      q:c.quotient, r:c.remainder, hr:c.hasRemainder,
-      uq:uQ, ur:uR, ts:Date.now()});
+    var keyW = state.level+'_'+c.dividend+'_'+c.divisor;
+    var foundW = null;
+    for(var wi=0; wi<wr.length; wi++){
+      if((wr[wi].l+'_'+wr[wi].a+'_'+wr[wi].b) === keyW){ foundW = wr[wi]; break; }
+    }
+    if(foundW){
+      foundW.c = (foundW.c||1)+1; foundW.t = Date.now(); foundW.u = uQ; foundW.v = uR;
+    } else {
+      wr.push({i:state.student.id, l:state.level, a:c.dividend, b:c.divisor,
+               q:c.quotient, r:c.remainder, h:c.hasRemainder?1:0, u:uQ, v:uR, t:Date.now(), c:1});
+      if(wr.length > 20) wr.shift();
+    }
     saveWrong(wr);
 
     var tipHtml = buildHint(c, state.attemptCount);
@@ -1302,20 +1549,46 @@ function submit(){
     sfxBad();
   }
 }
-/* 遊戲中即時同步目前分數到老師後台（不另開新嘗試記錄，只更新最佳分數） */
-function pushLiveScore(){
-  if(!state.student || state.gameOver) return;
-  var all = getStudents();
-  var me = all[state.student.id];
-  if(!me) return;
-  me = migrateStudent(me);
-  if(state.score > (me.levelScores[state.level]||0)) me.levelScores[state.level] = state.score;
-  me.lastSeen = Date.now();
-  me.currentLevel = Math.max(me.currentLevel||1, state.level);
-  saveStudents(all);
+/* ===== 老師暫停 / 結束：學生端跟隨 ===== */
+function showPauseOverlay(icon, title, text){
+  var ov = $('pauseOverlay'); if(!ov) return;
+  var i=$('pauseIcon'), t=$('pauseTitle'), p=$('pauseText');
+  if(i) i.textContent = icon; if(t) t.textContent = title; if(p) p.textContent = text;
+  ov.style.display = 'flex';
 }
-function finishGame(){
-  if(state.gameOver) return;
+function hidePauseOverlay(){
+  var ov = $('pauseOverlay'); if(ov) ov.style.display = 'none';
+}
+function enterPause(){
+  state.paused = true;
+  state.pausedAt = Date.now();
+  state.locked = true;
+  state.spinning = false;
+  clearTimeout(state.nextTimer);
+  showPauseOverlay('⏸', '老師暫停了遊戲', '請稍等，老師繼續後會自動恢復');
+  pushLiveNow();
+}
+function exitPause(){
+  if(state.pausedAt) state.endTime += (Date.now() - state.pausedAt);
+  state.paused = false; state.pausedAt = 0;
+  state.locked = false;
+  hidePauseOverlay();
+  /* 若暫停前剛答對（正等待下一題），恢復後補上換題 */
+  if(state.currentScored && !state.gameOver){
+    clearTimeout(state.nextTimer);
+    state.nextTimer = setTimeout(function(){ if(!state.gameOver && !state.paused) nextQuestion(); }, 700);
+  }
+  pushLiveNow();
+}
+function forceEndByTeacher(){
+  state.gameOver = true;
+  clearInterval(state.timerInterval); clearTimeout(state.nextTimer);
+  state.locked = true;
+  showPauseOverlay('⏹', '老師已結束本關', '本關已停止，成績已自動記錄');
+  setTimeout(function(){ hidePauseOverlay(); finishGame(true); }, 1600);
+}
+function finishGame(force){
+  if(state.gameOver && !force) return;
   state.gameOver = true;
   clearInterval(state.timerInterval);
   clearTimeout(state.nextTimer);
@@ -1350,8 +1623,18 @@ function finishGame(){
   me.finished = allDone;
   if(allDone && !me.finishedAt) me.finishedAt = Date.now();
 
+  // 只保留每關最近 20 次嘗試，控制雲端體積
+  if(me.attempts[state.level] && me.attempts[state.level].length > 20){
+    me.attempts[state.level] = me.attempts[state.level].slice(-20);
+  }
+
   me.lastSeen = Date.now();
-  saveStudents(all);
+  me.gen = myGen();
+  me.live = {lv:state.level, score:state.score, correct:state.correct, attempted:state.attempted,
+             ts:Date.now(), paused:false, done:true};
+  localStorage.setItem(K_STU, JSON.stringify(all));
+  cloudPost('stu_'+me.id, me);
+  __lastPushAt = Date.now();
   showResult();
 }
 function showResult(){
@@ -1463,6 +1746,10 @@ function updatePassHint(){
   if(b) b.addEventListener('click', function(){ renderLevelSettings(); renderCommandList(); show('teacherLevels'); });
 })();
 (function(){
+  var b=$('btnGoLive');
+  if(b) b.addEventListener('click', function(){ renderLive(); show('teacherLive'); });
+})();
+(function(){
   var b=$('btnGoScores');
   if(b) b.addEventListener('click', function(){ renderGroupTables(); show('teacherScores'); });
 })();
@@ -1479,7 +1766,7 @@ function updatePassHint(){
   if(b) b.addEventListener('click', function(){ renderAnalysis(); show('analysis'); });
 })();
 (function(){
-  var ids = ['btnBackFromLevels','btnBackFromScores','btnBackFromStudents','btnBackFromAttempts','btnAnalysisBack'];
+  var ids = ['btnBackFromLevels','btnBackFromScores','btnBackFromLive','btnBackFromStudents','btnBackFromAttempts','btnAnalysisBack'];
   ids.forEach(function(id){
     var b = $(id);
     if(b) b.addEventListener('click', function(){ renderTeacherMenu(); show('teacher'); });
@@ -1503,7 +1790,11 @@ function renderCmdStatusBox(){
   }
   if(active > 0){
     var r = getCommandRemaining(active);
-    text.innerHTML = '<span style="color:var(--green-d)">🟢 第 ' + active + ' 關進行中</span> · 剩餘 ' + fmtClock(r);
+    if(isCommandPaused(active)){
+      text.innerHTML = '<span style="color:#E67E22;font-weight:900;">⏸ 第 ' + active + ' 關已暫停</span> · 剩餘 ' + fmtClock(r);
+    } else {
+      text.innerHTML = '<span style="color:var(--green-d)">🟢 第 ' + active + ' 關進行中</span> · 剩餘 ' + fmtClock(r);
+    }
   } else {
     var hasEnded = false;
     for(var i=1;i<=3;i++){ if(getCommand(i) !== null) hasEnded = true; }
@@ -1536,14 +1827,24 @@ function renderCommandList(){
     var rowClass='', statusHtml='', btnHtml='';
     if(!cmd){
       statusHtml = '<span style="color:var(--muted)">⚪ 未發布</span>';
-      btnHtml = '<button type="button" class="btn small primary" data-publish="'+lv+'">🚀 發布開始指令</button>';
+      btnHtml = '<button type="button" class="btn small primary" data-publish="'+lv+'">🚀 發布</button>';
+    } else if(cmd.endedAt){
+      rowClass=' ended';
+      statusHtml = '<span style="color:var(--muted)">🔴 老師已結束</span>';
+      btnHtml = '<button type="button" class="btn small primary" data-publish="'+lv+'">🔄 重新發布</button>';
+    } else if(cmd.paused){
+      rowClass=' active';
+      statusHtml = '<span style="color:#E67E22;font-weight:900;">⏸ 已暫停 · 剩餘 <b>'+fmtClock(remaining)+'</b></span>';
+      btnHtml = '<button type="button" class="btn small primary" data-resume="'+lv+'">▶ 繼續</button>' +
+                '<button type="button" class="btn small danger" data-end="'+lv+'">⏹ 結束</button>';
     } else if(remaining > 0){
       rowClass=' active';
       statusHtml = '<span style="color:var(--green-d)">🟢 進行中 · 剩餘 <b>'+fmtClock(remaining)+'</b></span>';
-      btnHtml = '<button type="button" class="btn small danger" data-revoke="'+lv+'">撤回指令</button>';
+      btnHtml = '<button type="button" class="btn small sun" data-pause="'+lv+'">⏸ 暫停</button>' +
+                '<button type="button" class="btn small danger" data-end="'+lv+'">⏹ 結束</button>';
     } else {
       rowClass=' ended';
-      statusHtml = '<span style="color:var(--muted)">🔴 已結束</span>';
+      statusHtml = '<span style="color:var(--muted)">🔴 時間到（已結束）</span>';
       btnHtml = '<button type="button" class="btn small primary" data-publish="'+lv+'">🔄 重新發布</button>';
     }
     html += '<div class="command-row'+rowClass+'">' +
@@ -1582,6 +1883,34 @@ function renderCommandList(){
       renderCommandList(); renderCmdStatusBox();
       return;
     }
+    var ps = e.target.closest('button[data-pause]');
+    if(ps){
+      var lvp = Number(ps.dataset.pause);
+      pauseCommand(lvp);
+      toast('⏸ ' + LEVELS[lvp].title + ' 已暫停，所有學生會凍結');
+      sfxClick();
+      renderCommandList(); renderCmdStatusBox();
+      return;
+    }
+    var rs = e.target.closest('button[data-resume]');
+    if(rs){
+      var lvr = Number(rs.dataset.resume);
+      resumeCommand(lvr);
+      toast('▶ ' + LEVELS[lvr].title + ' 已繼續，學生恢復作答');
+      sfxOk();
+      renderCommandList(); renderCmdStatusBox();
+      return;
+    }
+    var en = e.target.closest('button[data-end]');
+    if(en){
+      var lve = Number(en.dataset.end);
+      if(!confirm('確定要立即結束「' + LEVELS[lve].title + '」嗎？\n所有學生會立刻停止作答，目前分數會記錄下來。')) return;
+      endCommand(lve);
+      toast('⏹ ' + LEVELS[lve].title + ' 已立即結束');
+      sfxAlert();
+      renderCommandList(); renderCmdStatusBox();
+      return;
+    }
   });
 })();
 
@@ -1613,6 +1942,52 @@ function renderCommandList(){
     toast('各關時長已儲存 ✓'); sfxOk();
   });
 })();
+
+/* ===== 即時戰況（學生做題中邊做邊看） ===== */
+function renderLive(){
+  var all = Object.values(getStudents()).map(function(s){ return migrateStudent(s); });
+  var now = Date.now();
+  var online = all.filter(function(s){ return now-(s.lastSeen||0) < 60000; });
+  var playing = all.filter(function(s){ return s.live && (now-(s.live.ts||0)) < 30000; });
+  var sumScore = playing.reduce(function(t,s){ return t+(s.live.score||0); },0);
+  var sumCorrect = playing.reduce(function(t,s){ return t+(s.live.correct||0); },0);
+
+  var sm = $('liveSummary');
+  if(sm) sm.innerHTML =
+    '<div><span>在線學生</span><b>' + online.length + ' 人</b></div>' +
+    '<div><span>正在作答</span><b style="color:var(--green-d)">' + playing.length + ' 人</b></div>' +
+    '<div><span>本輪即時總分</span><b>' + sumScore + ' 分</b></div>' +
+    '<div><span>已答對題數</span><b>' + sumCorrect + ' 題</b></div>';
+
+  [1,2].forEach(function(g){
+    var gname = g + '組';
+    var list = all.filter(function(s){ return s.group===gname; }).map(function(s){
+      var lv = (s.live && (now-(s.live.ts||0)) < 30000) ? s.live : null;
+      return {name:s.name, online:(now-(s.lastSeen||0) < 60000), active:!!lv,
+        lv: lv?lv.lv:0, score: lv?(lv.score||0):0, correct: lv?(lv.correct||0):0,
+        attempted: lv?(lv.attempted||0):0, paused: lv?!!lv.paused:false, done: lv?!!lv.done:false};
+    }).sort(function(a,b){
+      if(a.active !== b.active) return a.active ? -1 : 1;
+      if(a.active && b.active) return b.score - a.score;
+      return String(a.name).localeCompare(String(b.name),'zh-Hant');
+    });
+
+    var tb = $('live'+g+'Table'); if(!tb) return;
+    if(!list.length){ tb.innerHTML = '<tr><td class="empty">暫無學生</td></tr>'; return; }
+    tb.innerHTML = '<thead><tr><th>名字</th><th>關卡</th><th>目前分數</th><th>答對/答題</th><th>狀態</th></tr></thead><tbody>' +
+      list.map(function(s){
+        var status;
+        if(s.active){ status = s.done ? '✅ 剛完成' : (s.paused ? '⏸ 暫停中' : '🟢 作答中'); }
+        else { status = s.online ? '⚪ 待機' : '💤 離線'; }
+        return '<tr' + (s.active?' style="background:#F1FFF8"':'') + '>' +
+          '<td><b>' + esc(s.name) + '</b></td>' +
+          '<td>' + (s.lv ? LEVELS[s.lv].title : '-') + '</td>' +
+          '<td><b style="color:' + (s.active?'var(--green-d)':'var(--muted)') + '">' + s.score + '</b></td>' +
+          '<td>' + s.correct + ' / ' + s.attempted + '</td>' +
+          '<td>' + status + '</td></tr>';
+      }).join('') + '</tbody>';
+  });
+}
 
 /* ===== 比分頁 ===== */
 function renderGroupTables(){
@@ -1728,7 +2103,9 @@ function renderStudentTable(){
     var all = getStudents();
     var name = all[id] ? all[id].name : '此學生';
     if(!confirm('確定要刪除「'+name+'」的登入資料與所有成績嗎？')) return;
-    delete all[id]; saveStudents(all);
+    delete all[id];
+    localStorage.setItem(K_STU, JSON.stringify(all));
+    cloudPost('stu_'+id, {deleted:true, gen:myGen(), ts:Date.now()});   // 雲端同步移除
     var ans = getAnswers().filter(function(a){ return a.studentId !== id; }); saveAnswers(ans);
     if(state.student && state.student.id===id){ state.student=null; sessionStorage.removeItem(K_SES); }
     toast('已刪除 '+name); renderStudentTable();
@@ -1815,31 +2192,32 @@ function renderAttempts(){
 (function(){
   var btn = $('btnResetScores'); if(!btn) return;
   btn.addEventListener('click', function(){
-    if(!confirm('確定要重設所有學生的成績嗎？\n所有分數、嘗試記錄、作答紀錄與老師指令都會清除，但學生名單保留。')) return;
-    if(!confirm('再次確認：重設後無法復原。')) return;
-    var all = getStudents(); var s = getSettings(); var startLv = s.startLevel || 1;
-    Object.keys(all).forEach(function(k){
-      all[k].levelScores = {1:0, 2:0, 3:0};
-      all[k].attempts = {1:[], 2:[], 3:[]};
-      all[k].currentLevel = startLv;
-      all[k].finished = false; all[k].finishedAt = null;
-    });
-    saveStudents(all);
-    localStorage.removeItem(K_ANS); localStorage.removeItem(K_CMD);
-    toast('已重設所有學生成績與指令 ✓');
+    if(!confirm('確定要重設所有學生的成績嗎？\n所有分數、嘗試記錄、錯題記錄都會清除，但學生名單保留（學生不需重新登入）。')) return;
+    if(!confirm('再次確認：重設後無法復原，所有裝置會同步歸零。')) return;
+    teacherReset('scores');
+    toast('✅ 已重設所有學生成績（所有裝置同步）');
+    sfxOk();
     renderTeacherMenu();
+    if(currentScreen()==='screen-teacher-live') renderLive();
+    if(currentScreen()==='screen-teacher-scores') renderGroupTables();
+    if(currentScreen()==='screen-teacher-students') renderStudentTable();
+    if(currentScreen()==='screen-analysis') renderAnalysis();
   });
 })();
 
 (function(){
   var b=$('btnClearData'); if(!b) return;
   b.addEventListener('click', function(){
-    if(!confirm('確定要清除所有學生資料、成績與作答紀錄嗎？此操作無法復原。')) return;
+    if(!confirm('確定要清除所有學生資料、成績與作答紀錄嗎？\n學生需要重新輸入名字登入。此操作無法復原。')) return;
     if(!confirm('再次確認：所有資料都會被刪除。')) return;
-    localStorage.removeItem(K_STU); localStorage.removeItem(K_ANS); localStorage.removeItem(K_CMD);
-    localStorage.removeItem(K_WRONG);
-    cloudPost('wrong', []); cloudPost('students', {}); cloudPost('commands', {});
-    toast('已清除所有資料'); renderTeacherMenu();
+    teacherReset('all');
+    toast('✅ 已清除所有資料（所有裝置同步）');
+    sfxOk();
+    renderTeacherMenu();
+    if(currentScreen()==='screen-teacher-live') renderLive();
+    if(currentScreen()==='screen-teacher-scores') renderGroupTables();
+    if(currentScreen()==='screen-teacher-students') renderStudentTable();
+    if(currentScreen()==='screen-analysis') renderAnalysis();
   });
 })();
 
@@ -1911,12 +2289,12 @@ function renderAnalysis(){
   }
 
   var g = {};
-  getWrong().forEach(function(a){
+  getWrongAll().forEach(function(a){
     var key = a.dividend+'÷'+a.divisor+'_'+a.level;
     if(!g[key]) g[key] = {display:a.dividend+' ÷ '+a.divisor,
       correct:a.hr?(a.q+' 餘 '+a.r):String(a.q), level:a.level, times:0, students:{}};
-    g[key].times++;
-    g[key].students[a.sid] = a.name;
+    g[key].times += (a.count||1);
+    g[key].students[a.sid || ('x'+Math.random())] = 1;
   });
   var wrongList = Object.keys(g).map(function(k){
       var r = g[k]; r.people = Object.keys(r.students).length; return r;
@@ -2034,8 +2412,8 @@ document.addEventListener('keydown', function(e){
 /* ===== 心跳 & 自動刷新 ===== */
 setInterval(function(){
   if(!state.student) return;
-  var all = getStudents();
-  if(all[state.student.id]){ all[state.student.id].lastSeen = Date.now(); saveStudents(all); }
+  if(currentScreen() === 'screen-game') return;   // 遊戲中由 pushLiveNow 負責
+  pushMyRecord(null, true);
 }, 20000);
 
 setInterval(function(){ checkAutoJump(); }, 800);
@@ -2043,6 +2421,8 @@ setInterval(function(){ checkAutoJump(); }, 800);
 setInterval(function(){
   var ts = $('screen-teacher');
   if(ts && ts.classList.contains('active')) renderTeacherMenu();
+  var lvA = $('screen-teacher-live');
+  if(lvA && lvA.classList.contains('active')) renderLive();
   var sc = $('screen-teacher-scores');
   if(sc && sc.classList.contains('active')) renderGroupTables();
   var st = $('screen-teacher-students');
@@ -2064,6 +2444,8 @@ window.addEventListener('storage', function(e){
   if(ls && ls.classList.contains('active')) enterMap();
   var ts = $('screen-teacher');
   if(ts && ts.classList.contains('active')) renderTeacherMenu();
+  var lvA = $('screen-teacher-live');
+  if(lvA && lvA.classList.contains('active')) renderLive();
   var sc = $('screen-teacher-scores');
   if(sc && sc.classList.contains('active')) renderGroupTables();
   var st = $('screen-teacher-students');
@@ -2078,8 +2460,17 @@ window.addEventListener('storage', function(e){
 
 /* ===== 啟動 ===== */
 (function(){
+  /* 依當前畫面自動調整雲端同步頻率：
+     遊戲中 10 秒（暫停/結束約 10 秒內生效）、即時戰況 4 秒、其他 16 秒 */
+  var __pollTick = 0;
   setInterval(function(){
+    __pollTick++;
+    var scr = currentScreen();
+    var every = (scr === 'screen-game') ? 5 : (scr === 'screen-teacher-live') ? 2 : 8;
+    if(__pollTick % every !== 0) return;
     cloudPullAndApply().then(function(){
+      var lvB = $('screen-teacher-live');
+      if(lvB && lvB.classList.contains('active')) renderLive();
       var an = $('screen-analysis');
       if(an && an.classList.contains('active')) renderAnalysis();
       var st = $('screen-teacher-students');
@@ -2088,8 +2479,11 @@ window.addEventListener('storage', function(e){
       if(at && at.classList.contains('active')) renderAttempts();
       var sc = $('screen-teacher-scores');
       if(sc && sc.classList.contains('active')) renderGroupTables();
+      var tl = $('screen-teacher-levels');
+      if(tl && tl.classList.contains('active')) renderCommandList();
     });
-  }, 15000);   // 每 15 秒自動同步一次雲端，老師後台保持即時更新
+  }, 2000);
+
   cloudPullAndApply().then(function(){
     if(!localStorage.getItem(K_SET)){
       saveSettings({ levelDurations:{1:300,2:300,3:300}, startLevel:1, teacherPassword:'1234' });
@@ -2100,9 +2494,10 @@ window.addEventListener('storage', function(e){
         var all = getStudents();
         if(all[saved.id]){
           state.student = saved;
-          all[saved.id].lastSeen = Date.now();
-          saveStudents(all);
+          state.student.name = all[saved.id].name;
+          state.student.group = all[saved.id].group;
           enterMap();
+          pushMyRecord(null, true);
         }
       }
     }catch(e){}
