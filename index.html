@@ -476,9 +476,9 @@
       <p>學生做題時每 10 秒自動回報，這裡會邊做邊更新。</p>
       <div class="stat-grid" id="liveSummary" style="margin-bottom:14px;"></div>
       <div class="group-cols">
-        <div class="group-box"><h4><span><span class="pill g1">1 組</span></span></h4>
+        <div class="group-box"><h4><span><span class="pill g1">1 組</span></span><span id="liveG1Total" class="gsum">即時 <b>0</b> 分</span></h4>
           <div class="table-wrap"><table class="data-table" id="live1Table"></table></div></div>
-        <div class="group-box"><h4><span><span class="pill g2">2 組</span></span></h4>
+        <div class="group-box"><h4><span><span class="pill g2">2 組</span></span><span id="liveG2Total" class="gsum">即時 <b>0</b> 分</span></h4>
           <div class="table-wrap"><table class="data-table" id="live2Table"></table></div></div>
       </div>
       <div class="hint">💡 這裡只顯示本輪即時作答；歷屆最高分請到「歷史成績」頁</div>
@@ -1952,11 +1952,25 @@ function renderLive(){
   var sumScore = playing.reduce(function(t,s){ return t+(s.live.score||0); },0);
   var sumCorrect = playing.reduce(function(t,s){ return t+(s.live.correct||0); },0);
 
+  /* 各組即時總分（只計本輪作答中的學生） */
+  var gStat = {1:{total:0, online:0, playing:0}, 2:{total:0, online:0, playing:0}};
+  all.forEach(function(s){
+    var g = (s.group === '2組') ? 2 : (s.group === '1組') ? 1 : 0;
+    if(!g) return;
+    if(now-(s.lastSeen||0) < 60000) gStat[g].online++;
+    if(s.live && (now-(s.live.ts||0)) < 30000){
+      gStat[g].playing++;
+      gStat[g].total += (s.live.score||0);
+    }
+  });
+
   var sm = $('liveSummary');
   if(sm) sm.innerHTML =
     '<div><span>在線學生</span><b>' + online.length + ' 人</b></div>' +
     '<div><span>正在作答</span><b style="color:var(--green-d)">' + playing.length + ' 人</b></div>' +
-    '<div><span>本輪即時總分</span><b>' + sumScore + ' 分</b></div>' +
+    '<div><span>1 組即時總分</span><b style="color:var(--green-d)">' + gStat[1].total + ' 分</b></div>' +
+    '<div><span>2 組即時總分</span><b style="color:#E8833A">' + gStat[2].total + ' 分</b></div>' +
+    '<div><span>全班即時總分</span><b>' + sumScore + ' 分</b></div>' +
     '<div><span>已答對題數</span><b>' + sumCorrect + ' 題</b></div>';
 
   [1,2].forEach(function(g){
@@ -1971,6 +1985,11 @@ function renderLive(){
       if(a.active && b.active) return b.score - a.score;
       return String(a.name).localeCompare(String(b.name),'zh-Hant');
     });
+
+    /* 組標題的即時總分 */
+    var gt = $('liveG'+g+'Total');
+    if(gt) gt.innerHTML = '即時 <b>' + gStat[g].total + '</b> 分' +
+      '<span style="font-weight:700;color:var(--muted);font-size:11.5px;"> · 在線 ' + gStat[g].online + ' 人</span>';
 
     var tb = $('live'+g+'Table'); if(!tb) return;
     if(!list.length){ tb.innerHTML = '<tr><td class="empty">暫無學生</td></tr>'; return; }
